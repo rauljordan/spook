@@ -1,6 +1,6 @@
 cradle:
   cabal:
     - path: "src"
-      component: "exe:buildsafe"
+      component: "exe:spook"
     - path: "tests"
       component: "test:tests"

@@ -18,7 +18,6 @@ bytesPerLengthOffset = 4
 bitsPerByte :: Int
 bitsPerByte = 8
 
--- Type class for SSZ items.
 data SSZItem a
   = SUint64 Word64
   | SUint32 Word32
@@ -34,19 +33,20 @@ data SSZItem a
 
 -- The cereal package's encoder is big-endian, so we create our
 -- own little-endian encoder using a simple composition.
-littleEncoder :: (Serialize a) => a -> B.ByteString
+littleEncoder :: (Serialize a) => a -> ByteString
 littleEncoder = B.reverse . encode
 
--- TODO: Better way to do this???
-takeNBits :: Int -> B.ByteString -> [Bool]
+takeNBits :: Int -> ByteString -> [Bool]
 takeNBits n bs = take n $ B.foldl' toBool [] bs
   where
     toBool l w = (Bits.testBit w <$> [0 .. (Bits.finiteBitSize w)]) ++ l
 
-type DeserializationResult a = Either DeserializationError (SSZItem a)
-data DeserializationError = EmptyData | UnknownError String
 -- Deserialization.
-deserialize :: SSZItem a -> B.ByteString -> DeserializationResult a
+type DeserializationResult a = Either DeserializationError (SSZItem a) 
+type IntermediateDeserializationResult a = Either DeserializationError [SSZItem a]
+data DeserializationError = EmptyData | UnknownError String deriving stock Show
+
+deserialize :: SSZItem a -> ByteString -> DeserializationResult a
 deserialize (SBool _) enc = case takeNBits 1 enc of
   (x : _) -> Right $ SBool x
   [] -> Left EmptyData
@@ -66,42 +66,54 @@ deserialize (SUint8 _) enc = do
   case runGet getWord8 enc of
     Left err -> Left $ UnknownError err
     Right item -> Right $ SUint8 item
---deserialize (SVector n (x : _)) enc =
-  --if isFixed x
-    --then case itemLen x of
-      --Just s -> result
-        --where
-          --result = do
-            --items <- fixedVectorDeserialize x s enc
-            --return $ SVector n items
-      --Nothing -> Left "no item length"
-    --else Left "nothing"
-deserialize _ _ = Left EmptyData
+deserialize (SVector n (item : _)) enc =
+  if isFixed item
+    then
+      fixedVectorDeserialize item n (B.length enc) enc
+  else 
+    Left $ UnknownError "Weird"
+deserialize _ _ = Left $ UnknownError "Unimplemented"
 
---fixedVectorDeserialize :: SSZItem a -> Int -> B.ByteString -> Either String [SSZItem a]
---fixedVectorDeserialize el len xs =
-  --if B.length xs == 0
-    --then Right []
-    --else decodedSlidingWindows
-  --where
-    --decodedSlidingWindows = do
-      --let itemBytes = B.take len xs
-      --let rest = B.drop len xs
-      --decodedElem <- deserialize el itemBytes
-      --continued <- fixedVectorDeserialize el len rest
-      --return $ decodedElem : continued
+fixedVectorDeserialize :: SSZItem a -> Int -> Int -> ByteString -> DeserializationResult a
+fixedVectorDeserialize item numItems encodedLength encoded = do
+  let chunkSize = encodedLength `div` numItems
+  chunks <- chunkBytes encoded chunkSize
+  decodedChunks <- deserializeChunks item chunks
+  Right $ SVector numItems decodedChunks
+
+deserializeChunks :: SSZItem a -> [ByteString] -> IntermediateDeserializationResult a
+deserializeChunks item =
+  f item [] where
+    f _ acc [] = Right acc
+    f i acc (x:xs) = do
+      decoded<-deserialize item x
+      f i (decoded:acc) xs
+
+chunkBytes :: ByteString -> Int -> Either DeserializationError [ByteString]
+chunkBytes encoded chunkSize =
+  let numChunks = B.length encoded `div` chunkSize in
+  if numChunks == 1
+    then Left $ UnknownError "Wrong size" 
+  else
+    Right $ f [] encoded chunkSize where
+      f acc _ 0 = acc
+      f acc e n =
+        let bytesPerChunk = B.length encoded `div` chunkSize in
+        let chunk' = B.take bytesPerChunk e in
+        f (chunk':acc) (B.drop bytesPerChunk e) n
 
 -- Serialization.
 type SerializationResult a = Either SerializationError ByteString
 type IntermediateSerializationResult a = Either SerializationError [ByteString]
-type FixedPart = Maybe ByteString
-type Offset = Int
-type EncodedOffset = ByteString
 data SerializationError 
   = BeyondMaxLength Int 
   | NoCorrespondingOffset
   | Other [Maybe ByteString]
   deriving stock (Eq, Show)
+
+type FixedPart = Maybe ByteString
+type Offset = Int
+type EncodedOffset = ByteString
 
 serialize :: SSZItem a -> SerializationResult a
 serialize (SBool a) = Right $ littleEncoder a
@@ -189,6 +201,9 @@ interleaveOffsets =
 itemLen :: SSZItem a -> Maybe Int
 itemLen (SBool _) = Just 1
 itemLen (SUint64 _) = Just 8
+itemLen (SUint32 _) = Just 4
+itemLen (SUint16 _) = Just 2
+itemLen (SUint8 _) = Just 1
 itemLen (SVector n _) = Just n
 itemLen (SList _ xs) = Just $ length xs
 itemLen _ = Nothing

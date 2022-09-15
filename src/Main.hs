@@ -20,5 +20,20 @@ main = do
     Left a -> print a
     Right a -> print $ toHexString a
 
+  putStrLn "Serializing Final..."
+  let final = SVector 2 [SUint16 5, SUint16 6, SUint16 7]
+  let encodedFinal = serialize final
+  case encodedFinal of
+    Left a -> print a
+    Right a -> print $ toHexString a
+
+  print $ deserialize (SVector 2 [SUint16 0]) (encodedResult encodedFinal) 
+
 toHexString :: ByteString -> String
 toHexString = B.foldr' ((<>) . printf "%02x") ""
+
+encodedResult :: SerializationResult a -> ByteString
+encodedResult res =
+  case res of
+    Left _ -> B.empty
+    Right el -> el

@@ -44,7 +44,11 @@ takeNBits n bs = take n $ B.foldl' toBool [] bs
 -- Deserialization.
 type DeserializationResult a = Either DeserializationError (SSZItem a) 
 type IntermediateDeserializationResult a = Either DeserializationError [SSZItem a]
-data DeserializationError = EmptyData | UnknownError String deriving stock Show
+data DeserializationError 
+  = EmptyData 
+  | UnknownError String 
+  | WrongSize Int
+  deriving stock Show
 
 deserialize :: SSZItem a -> ByteString -> DeserializationResult a
 deserialize (SBool _) enc = case takeNBits 1 enc of
@@ -77,30 +81,29 @@ deserialize _ _ = Left $ UnknownError "Unimplemented"
 fixedVectorDeserialize :: SSZItem a -> Int -> Int -> ByteString -> DeserializationResult a
 fixedVectorDeserialize item numItems encodedLength encoded = do
   let chunkSize = encodedLength `div` numItems
-  chunks <- chunkBytes encoded chunkSize
-  decodedChunks <- deserializeChunks item chunks
-  Right $ SVector numItems decodedChunks
+  if chunkSize * numItems == encodedLength
+    then do
+      let chunks = chunkBytes encoded numItems
+      decodedChunks <- deserializeChunks item chunks
+      Right $ SVector numItems decodedChunks
+  else
+    Left $ WrongSize 0 -- TODO: Fix up
 
 deserializeChunks :: SSZItem a -> [ByteString] -> IntermediateDeserializationResult a
 deserializeChunks item =
   f item [] where
     f _ acc [] = Right acc
     f i acc (x:xs) = do
-      decoded<-deserialize item x
+      decoded<-deserialize i x
       f i (decoded:acc) xs
 
-chunkBytes :: ByteString -> Int -> Either DeserializationError [ByteString]
+chunkBytes :: ByteString -> Int -> [ByteString]
 chunkBytes encoded chunkSize =
-  let numChunks = B.length encoded `div` chunkSize in
-  if numChunks == 1
-    then Left $ UnknownError "Wrong size" 
-  else
-    Right $ f [] encoded chunkSize where
-      f acc _ 0 = acc
-      f acc e n =
-        let bytesPerChunk = B.length encoded `div` chunkSize in
-        let chunk' = B.take bytesPerChunk e in
-        f (chunk':acc) (B.drop bytesPerChunk e) n
+  f [] encoded chunkSize where
+    f acc _ 0 = acc
+    f acc e n =
+      let chunk' = B.take chunkSize e in
+      f (chunk':acc) (B.drop chunkSize e) n
 
 -- Serialization.
 type SerializationResult a = Either SerializationError ByteString

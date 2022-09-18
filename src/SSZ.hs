@@ -1,6 +1,7 @@
 module SSZ (
   SSZItem (..),
   SerializationResult,
+  DeserializationResult,
   zeroVal,
   serialize,
   deserialize,

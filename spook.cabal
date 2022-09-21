@@ -29,6 +29,7 @@ common shared
     DataKinds
     DeriveDataTypeable
     DeriveFoldable
+    DeriveAnyClass
     DeriveFunctor
     DeriveGeneric
     DeriveLift

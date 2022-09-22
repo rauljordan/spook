@@ -25,6 +25,7 @@ common shared
   default-extensions:
     NoStarIsType
     BangPatterns
+    UndecidableInstances
     ConstraintKinds
     DataKinds
     DeriveDataTypeable

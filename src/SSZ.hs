@@ -35,8 +35,8 @@ data SSZItem a
   | SList Int [SSZItem a]
   | SVector Int [SSZItem a]
   | SContainer [SSZItem a]
-  | SBitlist B.ByteString
-  | SBitvector B.ByteString
+  | SBitlist B.ByteString -- TODO: Implement a bitlist abstraction.
+  | SBitvector B.ByteString -- TODO: Implement a bitvector abstraction.
   deriving stock (Show, Eq, Foldable)
 
 -- Gets the length of an SSZ item in bytes.
@@ -99,6 +99,102 @@ takeNBits n bs = take n $ B.foldl' toBool [] bs
   where
     toBool l w = (testBit w <$> [0 .. (finiteBitSize w)]) ++ l
 
+-- Serialization.
+type SerializationResult a = Either SerializationError B.ByteString
+type IntermediateSerializationResult a = Either SerializationError [B.ByteString]
+data SerializationError 
+  = BeyondMaxLength Int 
+  | NoCorrespondingOffset
+  | Other [Maybe B.ByteString]
+  deriving stock (Eq, Show)
+
+type FixedPart = Maybe B.ByteString
+type Offset = Int
+type EncodedOffset = B.ByteString
+
+serialize :: SSZItem a -> SerializationResult a
+serialize (SBool a) = Right $ littleEncoder a
+serialize (SUint64 a) = Right $ littleEncoder a
+serialize (SUint32 a) = Right $ littleEncoder a
+serialize (SUint16 a) = Right $ littleEncoder a
+serialize (SUint8 a) = Right $ littleEncoder a
+serialize (SVector _ xs) = serializeSequence xs
+serialize (SList _ xs) = serializeSequence xs
+serialize (SContainer xs) = serializeSequence xs
+serialize (SBitlist xs) = Right xs
+serialize (SBitvector xs) = Right xs
+
+serializeSequence :: [SSZItem a] -> SerializationResult a
+serializeSequence xs = do
+  fixedParts <- getFixedParts xs
+  variableParts <- getVariableParts xs
+  let fixedLengths = getFixedLengths fixedParts
+  let variableLengths = getVariableLengths variableParts
+  let total = sum $ fixedLengths++variableLengths
+  if total >= 2^(bytesPerLengthOffset*bitsPerByte) 
+    then Left $ BeyondMaxLength total
+  else do
+    let variableOffsets = getVariableOffsets fixedLengths variableLengths
+    encodedOffsets <- mapM encodeOffset variableOffsets
+    interleaved <- interleaveOffsets fixedParts (reverse encodedOffsets)
+    Right $ B.intercalate B.empty (interleaved ++ variableParts)
+
+getFixedParts :: [SSZItem a] -> Either SerializationError [FixedPart]
+getFixedParts =
+  gatherFixedParts [] where
+    gatherFixedParts acc [] = Right acc
+    gatherFixedParts acc (x:xs) = 
+      if isFixed x
+        then do
+          encoded <- serialize x
+          gatherFixedParts (Just encoded : acc) xs
+      else
+          gatherFixedParts (Nothing : acc) xs
+
+getVariableParts :: [SSZItem a] -> IntermediateSerializationResult a
+getVariableParts [] = Right []
+getVariableParts xs = do
+  -- Bubble up any serialization failures using the sequence operator
+  -- to turn a list of SerializationResults into an IntermediateSerializationResult
+  let encodedElems = map serialize (filter isVariable xs)
+  sequence encodedElems
+
+getFixedLengths :: [FixedPart] -> [Int]
+getFixedLengths = map determineFixedLength
+
+determineFixedLength :: FixedPart -> Int
+determineFixedLength Nothing = bytesPerLengthOffset
+determineFixedLength (Just a) = B.length a
+
+getVariableLengths :: [B.ByteString] -> [Int]
+getVariableLengths = map B.length 
+
+getVariableOffsets :: [Int] -> [Int] -> [Offset]
+getVariableOffsets fixedLengths variableLengths =
+  let totalFixed = sum fixedLengths in
+  let varItems = take (length variableLengths - 1) variableLengths in
+  scanl' (+) totalFixed varItems
+
+encodeOffset :: Int -> SerializationResult a
+encodeOffset offset = do
+  encodedOffset <- serialize $ SUint32 (fromIntegral offset)
+  Right encodedOffset
+
+-- Builds a list of byte strings where the fixed elements are left as is
+-- while the variable ones are replaced by their corresponding offset.
+interleaveOffsets :: [FixedPart] -> [EncodedOffset] -> IntermediateSerializationResult a
+interleaveOffsets =
+  interleave [] where
+    interleave acc [] _ = Right acc
+    interleave acc (x:xs) [] = 
+      case x of
+        Just fixedItem -> interleave (fixedItem : acc) xs []
+        Nothing -> Left NoCorrespondingOffset
+    interleave acc (x:xs) (o:os) =
+      case x of
+        Just fixedItem -> interleave (fixedItem : acc) xs (o:os)
+        Nothing -> interleave (o : acc) xs os
+
 -- Deserialization.
 type DeserializationResult a = Either (DeserializationError a) (SSZItem a) 
 type IntermediateDeserializationResult a = Either (DeserializationError a) [SSZItem a]
@@ -108,8 +204,6 @@ data DeserializationError a
   | WrongSize Int
   | WrongOff (SSZItem a)
   | WrongItems [SSZItem a]
-  | Mai [[SSZItem a]]
-  | BadOffsets [Int]
   | BadHex String
   deriving stock Show
 
@@ -223,7 +317,7 @@ deserializeFixedSequence item numItems encodedLength encoded = do
       decodedChunks <- deserializeChunks item chunks
       Right decodedChunks
   else
-    Left $ WrongSize 0 -- TODO: Fix up
+    Left $ WrongSize numItems -- TODO: Fix up
 
 deserializeVariableSequence :: SSZItem a -> B.ByteString -> IntermediateDeserializationResult a
 deserializeVariableSequence item encoded = do
@@ -240,6 +334,7 @@ deserializeVariableSequence item encoded = do
   items <- decodeWithItemLengths item [] itemLengths encodedItems
   Right $ reverse items
 
+-- Computes the differences between the items in the provided list.
 diffs :: [Int] -> [Int]
 diffs [] = []
 diffs [x] = [x `div` bytesPerLengthOffset]
@@ -286,98 +381,3 @@ chunkBytes encoded chunkSize =
         let chunk' = B.take chunkSize e in
         f (chunk':acc) (B.drop chunkSize e)
 
--- Serialization.
-type SerializationResult a = Either SerializationError B.ByteString
-type IntermediateSerializationResult a = Either SerializationError [B.ByteString]
-data SerializationError 
-  = BeyondMaxLength Int 
-  | NoCorrespondingOffset
-  | Other [Maybe B.ByteString]
-  deriving stock (Eq, Show)
-
-type FixedPart = Maybe B.ByteString
-type Offset = Int
-type EncodedOffset = B.ByteString
-
-serialize :: SSZItem a -> SerializationResult a
-serialize (SBool a) = Right $ littleEncoder a
-serialize (SUint64 a) = Right $ littleEncoder a
-serialize (SUint32 a) = Right $ littleEncoder a
-serialize (SUint16 a) = Right $ littleEncoder a
-serialize (SUint8 a) = Right $ littleEncoder a
-serialize (SVector _ xs) = serializeSequence xs
-serialize (SList _ xs) = serializeSequence xs
-serialize (SContainer xs) = serializeSequence xs
-serialize (SBitlist xs) = Right xs
-serialize (SBitvector xs) = Right xs
-
-serializeSequence :: [SSZItem a] -> SerializationResult a
-serializeSequence xs = do
-  fixedParts <- getFixedParts xs
-  variableParts <- getVariableParts xs
-  let fixedLengths = getFixedLengths fixedParts
-  let variableLengths = getVariableLengths variableParts
-  let total = sum $ fixedLengths++variableLengths
-  if total >= 2^(bytesPerLengthOffset*bitsPerByte) 
-    then Left $ BeyondMaxLength total
-  else do
-    let variableOffsets = getVariableOffsets fixedLengths variableLengths
-    encodedOffsets <- mapM encodeOffset variableOffsets
-    interleaved <- interleaveOffsets fixedParts (reverse encodedOffsets)
-    Right $ B.intercalate B.empty (interleaved ++ variableParts)
-
-getFixedParts :: [SSZItem a] -> Either SerializationError [FixedPart]
-getFixedParts =
-  gatherFixedParts [] where
-    gatherFixedParts acc [] = Right acc
-    gatherFixedParts acc (x:xs) = 
-      if isFixed x
-        then do
-          encoded <- serialize x
-          gatherFixedParts (Just encoded : acc) xs
-      else
-          gatherFixedParts (Nothing : acc) xs
-
-getVariableParts :: [SSZItem a] -> IntermediateSerializationResult a
-getVariableParts [] = Right []
-getVariableParts xs = do
-  -- Bubble up any serialization failures using the sequence operator
-  -- to turn a list of SerializationResults into an IntermediateSerializationResult
-  let encodedElems = map serialize (filter isVariable xs)
-  sequence encodedElems
-
-getFixedLengths :: [FixedPart] -> [Int]
-getFixedLengths = map determineFixedLength
-
-determineFixedLength :: FixedPart -> Int
-determineFixedLength Nothing = bytesPerLengthOffset
-determineFixedLength (Just a) = B.length a
-
-getVariableLengths :: [B.ByteString] -> [Int]
-getVariableLengths = map B.length 
-
-getVariableOffsets :: [Int] -> [Int] -> [Offset]
-getVariableOffsets fixedLengths variableLengths =
-  let totalFixed = sum fixedLengths in
-  let varItems = take (length variableLengths - 1) variableLengths in
-  scanl' (+) totalFixed varItems
-
-encodeOffset :: Int -> SerializationResult a
-encodeOffset offset = do
-  encodedOffset <- serialize $ SUint32 (fromIntegral offset)
-  Right encodedOffset
-
--- Builds a list of byte strings where the fixed elements are left as is
--- while the variable ones are replaced by their corresponding offset.
-interleaveOffsets :: [FixedPart] -> [EncodedOffset] -> IntermediateSerializationResult a
-interleaveOffsets =
-  interleave [] where
-    interleave acc [] _ = Right acc
-    interleave acc (x:xs) [] = 
-      case x of
-        Just fixedItem -> interleave (fixedItem : acc) xs []
-        Nothing -> Left NoCorrespondingOffset
-    interleave acc (x:xs) (o:os) =
-      case x of
-        Just fixedItem -> interleave (fixedItem : acc) xs (o:os)
-        Nothing -> interleave (o : acc) xs os

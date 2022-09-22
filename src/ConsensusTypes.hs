@@ -88,7 +88,7 @@ data Checkpoint = Checkpoint
   deriving stock (Eq, Show)
 
 data Deposit = Deposit
-  { proof :: [[Word8]]
+  { proof :: [Root]
   , depositData :: DepositData
   }
   deriving stock (Eq, Show)

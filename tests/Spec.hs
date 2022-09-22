@@ -23,13 +23,10 @@ main = hspec $ do
     it "sync_aggregate" $ do
       let shell = syncAggregateToContainer emptySyncAggregate
       runFixtureTest "sync_aggregate" shell
-    it "beacon_block_body_blinded_bellatrix" $ do
-      let shell = beaconBlockBodyBellatrixBlindedToContainer emptyBeaconBlockBodyBellatrixBlinded 
-      runFixtureTest "beacon_block_body_blinded_bellatrix" shell
 
 runFixtureTest :: String -> SSZItem a -> IO ()
 runFixtureTest testCase shell = do
-  fileBytes <- B.readFile $ "tests/fixtures/" <> testCase <> ".ssz"
+  fileBytes <- readFileBS $ "tests/fixtures/" <> testCase <> ".ssz"
   testRoundTripSSZ shell fileBytes
 
 testRoundTripSSZ :: SSZItem a -> ByteString -> IO ()

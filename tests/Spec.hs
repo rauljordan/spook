@@ -1,7 +1,7 @@
 module Main where
 
-import SSZ
 import ConsensusTypes
+import SSZ
 
 import Data.ByteString qualified as B
 import Text.Hex qualified as Hex
@@ -15,10 +15,10 @@ main = hspec $ do
       let shell = attestationToContainer emptyAttestation
       runFixtureTest "attestation" shell
     it "execution_payload_header" $ do
-      let shell = executionPayloadHeaderToContainer emptyExecutionPayloadHeader 
+      let shell = executionPayloadHeaderToContainer emptyExecutionPayloadHeader
       runFixtureTest "execution_payload_header" shell
     it "eth1_data" $ do
-      let shell = eth1DataToContainer emptyEth1Data 
+      let shell = eth1DataToContainer emptyEth1Data
       runFixtureTest "eth1_data" shell
     it "sync_aggregate" $ do
       let shell = syncAggregateToContainer emptySyncAggregate
@@ -31,10 +31,10 @@ runFixtureTest testCase shell = do
 
 testRoundTripSSZ :: SSZItem a -> ByteString -> IO ()
 testRoundTripSSZ shell rawData = do
-    let decoded = safeDeserialize shell rawData
-    decoded `shouldNotBe` shell
-    let roundTripEncoded = safeSerialize decoded
-    Hex.encodeHex roundTripEncoded `shouldBe` Hex.encodeHex rawData
+  let decoded = safeDeserialize shell rawData
+  decoded `shouldNotBe` shell
+  let roundTripEncoded = safeSerialize decoded
+  Hex.encodeHex roundTripEncoded `shouldBe` Hex.encodeHex rawData
 
 safeSerialize :: SSZItem a -> B.ByteString
 safeSerialize item =
@@ -43,7 +43,7 @@ safeSerialize item =
     Right encoded -> encoded
 
 safeDeserialize :: SSZItem a -> B.ByteString -> SSZItem a
-safeDeserialize item encoded = 
+safeDeserialize item encoded =
   case deserialize item encoded of
     Left err -> error $ show err
     Right decoded -> decoded

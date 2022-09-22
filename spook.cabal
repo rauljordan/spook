@@ -6,7 +6,6 @@ copyright:          2022 Raul Jordan
 maintainer:         raul@prysmaticlabs.com
 author:             Raul Jordan
 category:           Blockchain
-
 extra-source-files:
   LICENSE
   README.md
@@ -25,12 +24,11 @@ common shared
   default-extensions:
     NoStarIsType
     BangPatterns
-    UndecidableInstances
     ConstraintKinds
     DataKinds
+    DeriveAnyClass
     DeriveDataTypeable
     DeriveFoldable
-    DeriveAnyClass
     DeriveFunctor
     DeriveGeneric
     DeriveLift
@@ -63,35 +61,36 @@ common shared
     TypeApplications
     TypeFamilies
     TypeOperators
+    UndecidableInstances
     ViewPatterns
 
   build-depends:
     , aeson
     , async
-    , base          >=4.13.0.0 && <=4.18.0.0
+    , base                     >=4.13.0.0 && <=4.18.0.0
+    , cereal
+    , containers
     , data-default
     , directory
     , filepath
+    , hex-text
     , mtl
     , optics-core
     , profunctors
-    , relude        >=1.0
+    , record-dot-preprocessor
+    , relude                   >=1.0
     , rio
     , shower
     , time
-    , with-utf8
-    , record-dot-preprocessor
     , typed-process
-    , containers
-    , cereal
-    , hex-text
+    , with-utf8
 
   hs-source-dirs:     src
   default-language:   Haskell2010
 
 test-suite tests
-  import: shared
-  main-is: Spec.hs
+  import:         shared
+  main-is:        Spec.hs
   type:           exitcode-stdio-1.0
   hs-source-dirs: tests
   build-depends:  hspec

@@ -37,7 +37,7 @@ data SSZItem a
   | SVector Int [SSZItem a]
   | SContainer [SSZItem a]
   | SBitlist B.ByteString -- TODO: Implement a bitlist abstraction.
-  | SBitvector B.ByteString -- TODO: Implement a bitvector abstraction.
+  | SBitvector Int B.ByteString -- TODO: Implement a bitvector abstraction.
   deriving stock (Show, Eq, Foldable)
 
 -- Gets the length of an SSZ item in bytes.
@@ -47,6 +47,7 @@ itemLen (SUint64 _) = 8
 itemLen (SUint32 _) = 4
 itemLen (SUint16 _) = 2
 itemLen (SUint8 _) = 1
+itemLen (SBitvector n _) = n
 itemLen (SVector n (x : _)) =
   let len = itemLen x
    in n * len
@@ -65,7 +66,7 @@ zeroVal (SList n _) = SList n []
 zeroVal (SVector n (x : _)) = SVector n (replicate n (zeroVal x))
 zeroVal (SVector n []) = SVector n []
 zeroVal (SBitlist _) = SBitlist B.empty
-zeroVal (SBitvector _) = SBitvector B.empty
+zeroVal (SBitvector n _) = SBitvector n B.empty
 zeroVal (SContainer (x : xs)) = SContainer (replicate (length xs) (zeroVal x))
 zeroVal (SContainer []) = SContainer []
 zeroVal (SUint64 _) = SUint64 0
@@ -78,7 +79,7 @@ isVariable :: SSZItem a -> Bool
 isVariable (SList _ _) = True
 isVariable (SVector _ _) = False
 isVariable (SBitlist _) = True
-isVariable (SBitvector _) = False
+isVariable (SBitvector _ _) = False
 isVariable (SContainer xs) = all isVariable xs
 isVariable _ = False
 
@@ -123,7 +124,7 @@ serialize (SVector _ xs) = serializeSequence xs
 serialize (SList _ xs) = serializeSequence xs
 serialize (SContainer xs) = serializeSequence xs
 serialize (SBitlist xs) = Right xs
-serialize (SBitvector xs) = Right xs
+serialize (SBitvector _ xs) = Right xs
 
 serializeSequence :: [SSZItem a] -> SerializationResult a
 serializeSequence xs = do
@@ -231,8 +232,8 @@ deserialize (SUint8 _) enc = do
     Right item -> Right $ SUint8 item
 deserialize (SBitlist _) enc = do
   Right $ SBitlist enc
-deserialize (SBitvector _) enc = do
-  Right $ SBitvector enc
+deserialize (SBitvector n _) enc = do
+  Right $ SBitvector n enc
 deserialize (SVector n (item : _)) enc =
   if isFixed item
     then do
@@ -315,7 +316,7 @@ deserializeFixedSequence item numItems encodedLength encoded = do
       let chunks = chunkBytes encoded chunkSize
       decodedChunks <- deserializeChunks item chunks
       Right decodedChunks
-    else Left $ WrongSize numItems -- TODO: Fix up
+    else Left $ WrongSize encodedLength -- TODO: Fix up
 
 deserializeVariableSequence :: SSZItem a -> B.ByteString -> IntermediateDeserializationResult a
 deserializeVariableSequence item encoded = do

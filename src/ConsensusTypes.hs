@@ -381,7 +381,7 @@ syncAggregateToContainer :: SyncAggregate -> SSZItem a
 syncAggregateToContainer item =
   let sig' = map SUint8 (syncCommitteeSignature item)
    in SContainer
-        [ SBitvector $ syncCommitteeBits item
+        [ SBitvector 64 $ syncCommitteeBits item
         , SVector 96 sig'
         ]
 

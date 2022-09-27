@@ -2,6 +2,7 @@ module Main where
 
 import ConsensusTypes
 import SSZ
+import Forkchoice
 
 import Data.ByteString qualified as B
 import Text.Hex qualified as Hex

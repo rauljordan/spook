@@ -12,6 +12,7 @@ import Data.Serialize (
   runGet,
  )
 import Data.Word ()
+import Text.Printf
 
 -- Constants.
 bytesPerLengthOffset :: Int
@@ -20,70 +21,71 @@ bytesPerLengthOffset = 4
 bitsPerByte :: Int
 bitsPerByte = 8
 
-data SSZItem a
-  = SUint64 Word64
-  | SUint32 Word32
-  | SUint16 Word16
-  | SUint8 Word8
+data SSZItem
+  = Uint64 Word64
+  | Uint32 Word32
+  | Uint16 Word16
+  | Uint8 Word8
   | SBool Bool
-  | SList Int [SSZItem a]
-  | SVector Int [SSZItem a]
-  | SContainer [SSZItem a]
+  | SList Int SSZItem [SSZItem]
+  | SVector Int [SSZItem]
+  | SContainer [SSZItem]
   | SBitlist B.ByteString -- TODO: Implement a bitlist abstraction.
-  | SBitvector Int B.ByteString -- TODO: Implement a bitvector abstraction.
-  deriving stock (Show, Eq, Foldable)
+  | SBitvector B.ByteString -- TODO: Implement a bitvector abstraction.
+  deriving stock (Show, Eq)
 
 -- Gets the length of an SSZ item in bytes.
-itemLen :: SSZItem a -> Int
+itemLen :: SSZItem -> Int
+itemLen (Uint64 _) = 8
+itemLen (Uint32 _) = 4
+itemLen (Uint16 _) = 2
+itemLen (Uint8 _) = 1
 itemLen (SBool _) = 1
-itemLen (SUint64 _) = 8
-itemLen (SUint32 _) = 4
-itemLen (SUint16 _) = 2
-itemLen (SUint8 _) = 1
-itemLen (SBitvector n _) = n
+itemLen (SBitvector enc) = B.length enc
+itemLen (SBitlist enc) = B.length enc
 itemLen (SVector n (x : _)) =
   let len = itemLen x
    in n * len
-itemLen (SList _ (x : xs)) =
-  let len = itemLen x
-   in len * length (x : xs)
+itemLen (SList _ kind xs) =
+  let len = itemLen kind
+   in len * length xs
 itemLen (SContainer xs) =
   let lengths = map itemLen xs
    in sum lengths
 itemLen _ = 0
 
 -- Gets the default, zero value of an SSZ item type.
-zeroVal :: (Num b) => SSZItem a -> SSZItem b
-zeroVal (SBool _) = SBool False
-zeroVal (SList n _) = SList n []
+zeroVal :: SSZItem -> SSZItem
+zeroVal (SList n kind _) = SList n kind []
 zeroVal (SVector n (x : _)) = SVector n (replicate n (zeroVal x))
 zeroVal (SVector n []) = SVector n []
 zeroVal (SBitlist _) = SBitlist B.empty
-zeroVal (SBitvector n _) = SBitvector n B.empty
+zeroVal (SBitvector _) = SBitvector B.empty
 zeroVal (SContainer (x : xs)) = SContainer (replicate (length xs) (zeroVal x))
 zeroVal (SContainer []) = SContainer []
-zeroVal (SUint64 _) = SUint64 0
-zeroVal (SUint32 _) = SUint32 0
-zeroVal (SUint16 _) = SUint16 0
-zeroVal (SUint8 _) = SUint8 0
+zeroVal (SBool _) = SBool False
+zeroVal (Uint64 _) = Uint64 0
+zeroVal (Uint32 _) = Uint32 0
+zeroVal (Uint16 _) = Uint16 0
+zeroVal (Uint8 _) = Uint8 0
 
 -- Checks whether an item is variable size or not.
-isVariable :: SSZItem a -> Bool
-isVariable (SList _ _) = True
+isVariable :: SSZItem -> Bool
+isVariable (SList _ _ _) = True
 isVariable (SVector _ _) = False
 isVariable (SBitlist _) = True
-isVariable (SBitvector _ _) = False
-isVariable (SContainer xs) = all isVariable xs
+isVariable (SBitvector _) = False
+isVariable (SContainer xs) = any isVariable xs
 isVariable _ = False
 
 -- Checks whether an item is fixed size or not.
-isFixed :: SSZItem a -> Bool
+isFixed :: SSZItem -> Bool
 isFixed = not . isVariable
 
 -- Helpers.
-offsetToInt :: SSZItem a -> Either (DeserializationError a) Int
-offsetToInt (SUint32 num) = Right $ fromIntegral num
-offsetToInt _ = Left $ UnknownError "not an offset"
+offsetToInt :: SSZItem -> Either DeserializationError Int
+offsetToInt (Uint32 num) = Right $ fromIntegral num
+offsetToInt _ = Left NotAnOffset
 
 -- The cereal package's encoder is big-endian, so we create our
 -- own little-endian encoder using a simple composition.
@@ -96,31 +98,30 @@ takeNBits n bs = take n $ B.foldl' toBool [] bs
     toBool l w = (testBit w <$> [0 .. (finiteBitSize w)]) ++ l
 
 -- Serialization.
-type SerializationResult a = Either SerializationError B.ByteString
-type IntermediateSerializationResult a = Either SerializationError [B.ByteString]
+type SerializationResult = Either SerializationError B.ByteString
+type IntermediateSerializationResult = Either SerializationError [B.ByteString]
 data SerializationError
   = BeyondMaxLength Int
   | NoCorrespondingOffset
-  | Other [Maybe B.ByteString]
   deriving stock (Eq, Show)
 
 type FixedPart = Maybe B.ByteString
 type Offset = Int
 type EncodedOffset = B.ByteString
 
-serialize :: SSZItem a -> SerializationResult a
-serialize (SBool a) = Right $ littleEncoder a
-serialize (SUint64 a) = Right $ littleEncoder a
-serialize (SUint32 a) = Right $ littleEncoder a
-serialize (SUint16 a) = Right $ littleEncoder a
-serialize (SUint8 a) = Right $ littleEncoder a
+serialize :: SSZItem -> SerializationResult
 serialize (SVector _ xs) = serializeSequence xs
-serialize (SList _ xs) = serializeSequence xs
+serialize (SList _ _ xs) = serializeSequence xs
 serialize (SContainer xs) = serializeSequence xs
 serialize (SBitlist xs) = Right xs
-serialize (SBitvector _ xs) = Right xs
+serialize (SBitvector xs) = Right xs
+serialize (SBool item) = Right $ littleEncoder item
+serialize (Uint64 item) = Right $ littleEncoder item
+serialize (Uint32 item) = Right $ littleEncoder item
+serialize (Uint16 item) = Right $ littleEncoder item
+serialize (Uint8 item) = Right $ littleEncoder item
 
-serializeSequence :: [SSZItem a] -> SerializationResult a
+serializeSequence :: [SSZItem] -> SerializationResult
 serializeSequence xs = do
   fixedParts <- getFixedParts xs
   variableParts <- getVariableParts xs
@@ -135,7 +136,7 @@ serializeSequence xs = do
       interleaved <- interleaveOffsets fixedParts (reverse encodedOffsets)
       Right $ B.intercalate B.empty (interleaved ++ variableParts)
 
-getFixedParts :: [SSZItem a] -> Either SerializationError [FixedPart]
+getFixedParts :: [SSZItem] -> Either SerializationError [FixedPart]
 getFixedParts =
   gatherFixedParts []
   where
@@ -147,7 +148,7 @@ getFixedParts =
           gatherFixedParts (Just encoded : acc) xs
         else gatherFixedParts (Nothing : acc) xs
 
-getVariableParts :: [SSZItem a] -> IntermediateSerializationResult a
+getVariableParts :: [SSZItem] -> IntermediateSerializationResult
 getVariableParts [] = Right []
 getVariableParts xs = do
   -- Bubble up any serialization failures using the sequence operator
@@ -171,14 +172,14 @@ getVariableOffsets fixedLengths variableLengths =
    in let varItems = take (length variableLengths - 1) variableLengths
        in scanl' (+) totalFixed varItems
 
-encodeOffset :: Int -> SerializationResult a
+encodeOffset :: Int -> SerializationResult
 encodeOffset offset = do
-  encodedOffset <- serialize $ SUint32 (fromIntegral offset)
+  encodedOffset <- serialize $ Uint32 (fromIntegral offset)
   Right encodedOffset
 
 -- Builds a list of byte strings where the fixed elements are left as is
 -- while the variable ones are replaced by their corresponding offset.
-interleaveOffsets :: [FixedPart] -> [EncodedOffset] -> IntermediateSerializationResult a
+interleaveOffsets :: [FixedPart] -> [EncodedOffset] -> IntermediateSerializationResult
 interleaveOffsets =
   interleave []
   where
@@ -193,41 +194,44 @@ interleaveOffsets =
         Nothing -> interleave (o : acc) xs os
 
 -- Deserialization.
-type DeserializationResult a = Either (DeserializationError a) (SSZItem a)
-type IntermediateDeserializationResult a = Either (DeserializationError a) [SSZItem a]
-data DeserializationError a
+type DeserializationResult = Either DeserializationError SSZItem
+type IntermediateDeserializationResult = Either DeserializationError [SSZItem]
+data DeserializationError
   = EmptyData
-  | UnknownError String
-  | WrongSize Int
-  | WrongOff (SSZItem a)
-  | WrongItems [SSZItem a]
+  | DecoderLibraryError String
+  | NotAnOffset
+  | WrongSize Int SSZItem Int String
+  | Weird [Int]
+  | Other [SSZItem]
+  | OtherPure SSZItem
   | BadHex String
+  | OtherTwo String String String
   deriving stock (Show)
 
-deserialize :: SSZItem a -> B.ByteString -> DeserializationResult a
+deserialize :: SSZItem -> B.ByteString -> DeserializationResult
 deserialize (SBool _) enc = case takeNBits 1 enc of
   (x : _) -> Right $ SBool x
   [] -> Left EmptyData
-deserialize (SUint64 _) enc = do
+deserialize (Uint64 _) enc = do
   case runGet getWord64le enc of
-    Left err -> Left $ UnknownError err
-    Right item -> Right $ SUint64 item
-deserialize (SUint32 _) enc = do
+    Left err -> Left $ DecoderLibraryError err
+    Right item -> Right $ Uint64 item
+deserialize (Uint32 _) enc = do
   case runGet getWord32le enc of
-    Left err -> Left $ UnknownError err
-    Right item -> Right $ SUint32 item
-deserialize (SUint16 _) enc = do
+    Left err -> Left $ DecoderLibraryError err
+    Right item -> Right $ Uint32 item
+deserialize (Uint16 _) enc = do
   case runGet getWord16le enc of
-    Left err -> Left $ UnknownError err
-    Right item -> Right $ SUint16 item
-deserialize (SUint8 _) enc = do
+    Left err -> Left $ DecoderLibraryError err
+    Right item -> Right $ Uint16 item
+deserialize (Uint8 _) enc = do
   case runGet getWord8 enc of
-    Left err -> Left $ UnknownError err
-    Right item -> Right $ SUint8 item
+    Left err -> Left $ DecoderLibraryError err
+    Right item -> Right $ Uint8 item
 deserialize (SBitlist _) enc = do
   Right $ SBitlist enc
-deserialize (SBitvector n _) enc = do
-  Right $ SBitvector n enc
+deserialize (SBitvector _) enc = do
+  Right $ SBitvector enc
 deserialize (SVector n (item : _)) enc =
   if isFixed item
     then do
@@ -236,15 +240,16 @@ deserialize (SVector n (item : _)) enc =
     else do
       items <- deserializeVariableSequence item enc
       Right $ SVector n items
-deserialize (SList n (item : xs)) enc =
-  if isFixed item
+deserialize (SVector n []) _ = Right $ SVector n []
+deserialize (SList n kind _) enc =
+  if isFixed kind
     then do
-      let numItems = length (item : xs)
-      items <- deserializeFixedSequence item numItems (B.length enc) enc
-      Right $ SList n items
-    else do
-      items <- deserializeVariableSequence item enc
-      Right $ SList n items
+      let numItems = itemLen kind
+      items <- deserializeFixedSequence kind numItems (B.length enc) enc
+      Right $ SList n kind items
+  else do
+    items <- deserializeVariableSequence kind enc
+    Right $ SList n kind items
 deserialize (SContainer xs) enc = do
   fixedItems <- decodeFixedParts xs enc
   offsets <- decodeVariableOffsets xs enc
@@ -254,21 +259,38 @@ deserialize (SContainer xs) enc = do
     Just ff -> do
       let variableItems = filter isVariable xs
       let variableEncodedItems = B.drop ff enc
-      let itemLengths = diffs offsetInts
-      decodedVariable <- mapM (\x -> decodeWithItemLengths x itemLengths variableEncodedItems) variableItems
-      let decodedVariableItems = concat decodedVariable
-      let finalDecoded = replaceVariableItems fixedItems decodedVariableItems
+      decodedVariable <- mapM (`deserialize` variableEncodedItems) variableItems
+      let finalDecoded = replaceVariableItems fixedItems decodedVariable
       Right $ SContainer finalDecoded
-deserialize _ _ = Left $ UnknownError "Unimplemented"
 
 headMaybe :: [a] -> Maybe a
 headMaybe [] = Nothing
 headMaybe (x : _) = Just x
 
-type FixedItem a = SSZItem a
-type VariableItem a = SSZItem a
+type FixedItem = SSZItem
+type VariableItem = SSZItem
 
-replaceVariableItems :: [FixedItem a] -> [VariableItem a] -> [SSZItem a]
+deserializeFixedSequence :: SSZItem -> Int -> Int -> B.ByteString -> IntermediateDeserializationResult
+deserializeFixedSequence item numItems encodedLength encoded = do
+  let chunkSize = encodedLength `div` numItems
+  if chunkSize * numItems == encodedLength
+    then do
+      let chunks = chunkBytes encoded chunkSize
+      decodedChunks <- deserializeChunks item chunks
+      Right decodedChunks
+  else Left $ WrongSize encodedLength item numItems (toHexString encoded)
+
+deserializeVariableSequence :: SSZItem -> B.ByteString -> IntermediateDeserializationResult
+deserializeVariableSequence item encoded = do
+  -- Read the first offset to get some useful information about
+  -- where the data itself begins.
+  firstOffset <- decodeOffset (B.take bytesPerLengthOffset encoded)
+  dataStartIndex <- offsetToInt firstOffset
+  let encodedItems = B.drop dataStartIndex encoded
+  items <- deserialize item encodedItems
+  Right [items]
+
+replaceVariableItems :: [FixedItem] -> [VariableItem] -> [SSZItem]
 replaceVariableItems fixedItems varItems =
   f fixedItems varItems []
   where
@@ -281,7 +303,7 @@ replaceVariableItems fixedItems varItems =
         then f xs (y : ys) (x : acc)
         else f xs ys (y : acc)
 
-decodeVariableOffsets :: [SSZItem a] -> B.ByteString -> IntermediateDeserializationResult a
+decodeVariableOffsets :: [SSZItem] -> B.ByteString -> IntermediateDeserializationResult
 decodeVariableOffsets items =
   f 0 items []
   where
@@ -298,7 +320,7 @@ decodeVariableOffsets items =
           decoded <- decodeOffset sub
           f (lastDecodedIndex + bytesPerLengthOffset) xs (decoded : acc) encodedItems
 
-decodeFixedParts :: [SSZItem a] -> B.ByteString -> IntermediateDeserializationResult a
+decodeFixedParts :: [SSZItem] -> B.ByteString -> IntermediateDeserializationResult
 decodeFixedParts items =
   f 0 items []
   where
@@ -312,63 +334,17 @@ decodeFixedParts items =
           let sub = B.take l already
           decoded <- deserialize x sub
           f (lastDecodedIndex + l) xs (decoded : acc) encodedItems
-        else f (lastDecodedIndex + 4) xs (x : acc) encodedItems
+      else f (lastDecodedIndex + bytesPerLengthOffset) xs (x : acc) encodedItems
 
-deserializeFixedSequence :: SSZItem a -> Int -> Int -> B.ByteString -> IntermediateDeserializationResult a
-deserializeFixedSequence item numItems encodedLength encoded = do
-  let chunkSize = encodedLength `div` numItems
-  if chunkSize * numItems == encodedLength
-    then do
-      let chunks = chunkBytes encoded chunkSize
-      decodedChunks <- deserializeChunks item chunks
-      Right decodedChunks
-    else Left $ WrongSize encodedLength
+toHexString :: ByteString -> String
+toHexString = B.foldr' ((<>) . printf "%02x") ""
 
-deserializeVariableSequence :: SSZItem a -> B.ByteString -> IntermediateDeserializationResult a
-deserializeVariableSequence item encoded = do
-  -- Read the first offset to get some useful information about
-  -- where the data itself begins.
-  firstOffset <- decodeOffset (B.take bytesPerLengthOffset encoded)
-  dataStartIndex <- offsetToInt firstOffset
-  let offsetsBytes = chunkBytes (B.take dataStartIndex encoded) bytesPerLengthOffset
-  decodedOffsets <- mapM decodeOffset offsetsBytes
-  offsets <- mapM offsetToInt decodedOffsets
-  let itemLengths = map abs (diffs offsets)
-  -- From here, determine the lengths of the elements...
-  let encodedItems = B.drop dataStartIndex encoded
-  items <- decodeWithItemLengths item itemLengths encodedItems
-  Right $ reverse items
-
--- Computes the differences between the items in the provided list.
-diffs :: [Int] -> [Int]
-diffs [] = []
-diffs [x] = [x `div` bytesPerLengthOffset]
-diffs (x : xs) = zipWith (-) xs (x : xs)
-
-decodeWithItemLengths :: SSZItem a -> [Int] -> B.ByteString -> IntermediateDeserializationResult a
-decodeWithItemLengths item =
-  f []
-  where
-    f acc (x : xs) encodedItems =
-      if B.length encodedItems == 0
-        then Right acc
-        else do
-          decoded <- deserialize item (B.take x encodedItems)
-          f (decoded : acc) xs (B.drop x encodedItems)
-    f acc [] encodedItems = do
-      if B.length encodedItems == 0
-        then Right acc
-        else do
-          let len = B.length encodedItems
-          decoded <- deserialize item (B.take len encodedItems)
-          f (decoded : acc) [] (B.drop len encodedItems)
-
-decodeOffset :: B.ByteString -> DeserializationResult a
+decodeOffset :: B.ByteString -> DeserializationResult
 decodeOffset offset = do
-  decoded <- deserialize (SUint32 0) offset
+  decoded <- deserialize (Uint32 0) offset
   Right decoded
 
-deserializeChunks :: SSZItem a -> [B.ByteString] -> IntermediateDeserializationResult a
+deserializeChunks :: SSZItem -> [B.ByteString] -> IntermediateDeserializationResult
 deserializeChunks item =
   f item []
   where

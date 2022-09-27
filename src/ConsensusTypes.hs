@@ -152,17 +152,22 @@ emptyBeaconBlockBodyBellatrixBlinded =
     , executionPayloadHeader = emptyExecutionPayloadHeader
     }
 
-beaconBlockBodyBellatrixBlindedToContainer :: BeaconBlockBodyBellatrixBlinded -> SSZItem a
+beaconBlockBodyBellatrixBlindedToContainer :: BeaconBlockBodyBellatrixBlinded -> SSZItem
 beaconBlockBodyBellatrixBlindedToContainer item =
+  let emptyProp = proposerSlashingToContainer emptyProposerSlashing
+      emptyAttSlashing = attesterSlashingToContainer emptyAttesterSlashing
+      emptyAtt = attestationToContainer emptyAttestation
+      emptyDep = depositToContainer emptyDeposit
+      emptyVolExit = signedVoluntaryExitToContainer emptySignedVoluntaryExit in
   SContainer
-    [ SVector 96 $ map SUint8 (randaoReveal item)
+    [ SVector 96 $ map Uint8 (randaoReveal item)
     , eth1DataToContainer (eth1Data item)
-    , SVector 32 $ map SUint8 (graffiti item)
-    , SList 16 $ map proposerSlashingToContainer (proposerSlashings item)
-    , SList 2 $ map attesterSlashingToContainer (attesterSlashings item)
-    , SList 128 $ map attestationToContainer (attestations item)
-    , SList 16 $ map depositToContainer (deposits item)
-    , SList 16 $ map signedVoluntaryExitToContainer (voluntaryExits item)
+    , SVector 32 $ map Uint8 (graffiti item)
+    , SList 16 emptyProp $ map proposerSlashingToContainer (proposerSlashings item)
+    , SList 2 emptyAttSlashing $ map attesterSlashingToContainer (attesterSlashings item)
+    , SList 128 emptyAtt $ map attestationToContainer (attestations item)
+    , SList 16 emptyDep $ map depositToContainer (deposits item)
+    , SList 16 emptyVolExit $ map signedVoluntaryExitToContainer (voluntaryExits item)
     , syncAggregateToContainer (syncAggregate item)
     , executionPayloadHeaderToContainer (executionPayloadHeader item)
     ]
@@ -174,7 +179,7 @@ emptyProposerSlashing =
     , header2 = emptySignedBeaconBlockHeader
     }
 
-proposerSlashingToContainer :: ProposerSlashing -> SSZItem a
+proposerSlashingToContainer :: ProposerSlashing -> SSZItem
 proposerSlashingToContainer item =
   SContainer
     [ signedBeaconBlockHeaderToContainer (header1 item)
@@ -188,11 +193,11 @@ emptySignedBeaconBlockHeader =
     , headerSignature = [0]
     }
 
-signedBeaconBlockHeaderToContainer :: SignedBeaconBlockHeader -> SSZItem a
+signedBeaconBlockHeaderToContainer :: SignedBeaconBlockHeader -> SSZItem
 signedBeaconBlockHeaderToContainer item =
   SContainer
     [ beaconBlockHeaderToContainer (blockHeader item)
-    , SVector 96 $ map SUint8 (headerSignature item)
+    , SVector 96 $ map Uint8 (headerSignature item)
     ]
 
 emptyBeaconBlockHeader :: BeaconBlockHeader
@@ -205,14 +210,14 @@ emptyBeaconBlockHeader =
     , bodyRoot = [0]
     }
 
-beaconBlockHeaderToContainer :: BeaconBlockHeader -> SSZItem a
+beaconBlockHeaderToContainer :: BeaconBlockHeader -> SSZItem
 beaconBlockHeaderToContainer item =
   SContainer
-    [ SUint64 $ headerSlot item
-    , SUint64 $ proposerIndex item
-    , SVector 32 $ map SUint8 (parentRoot item)
-    , SVector 32 $ map SUint8 (stateRoot item)
-    , SVector 32 $ map SUint8 (bodyRoot item)
+    [ Uint64 $ headerSlot item
+    , Uint64 $ proposerIndex item
+    , SVector 32 $ map Uint8 (parentRoot item)
+    , SVector 32 $ map Uint8 (stateRoot item)
+    , SVector 32 $ map Uint8 (bodyRoot item)
     ]
 
 emptyEth1Data :: Eth1Data
@@ -223,12 +228,12 @@ emptyEth1Data =
     , blockHash = [0]
     }
 
-eth1DataToContainer :: Eth1Data -> SSZItem a
+eth1DataToContainer :: Eth1Data -> SSZItem
 eth1DataToContainer item =
   SContainer
-    [ SVector 32 $ map SUint8 (depositRoot item)
-    , SUint64 (depositCount item)
-    , SVector 32 $ map SUint8 (blockHash item)
+    [ SVector 32 $ map Uint8 (depositRoot item)
+    , Uint64 (depositCount item)
+    , SVector 32 $ map Uint8 (blockHash item)
     ]
 
 emptyAttesterSlashing :: AttesterSlashing
@@ -238,7 +243,7 @@ emptyAttesterSlashing =
     , att2 = emptyIndexedAttestation
     }
 
-attesterSlashingToContainer :: AttesterSlashing -> SSZItem a
+attesterSlashingToContainer :: AttesterSlashing -> SSZItem
 attesterSlashingToContainer item =
   let att1' = indexedAttestationToContainer (att1 item)
    in let att2' = indexedAttestationToContainer (att2 item)
@@ -250,22 +255,22 @@ attesterSlashingToContainer item =
 emptyIndexedAttestation :: IndexedAttestation
 emptyIndexedAttestation =
   IndexedAttestation
-    { attestingIndices = [0]
+    { attestingIndices = []
     , indexedAttestationData = emptyAttestationData
     , indexedAttestationSignature = [0]
     }
 
-indexedAttestationToContainer :: IndexedAttestation -> SSZItem a
+indexedAttestationToContainer :: IndexedAttestation -> SSZItem
 indexedAttestationToContainer item =
-  let sig' = map SUint8 (indexedAttestationSignature item)
-   in let indices' = map SUint64 (attestingIndices item)
-       in let attData' = indexedAttestationData item
-           in let contData = attestationDataToContainer attData'
-               in SContainer
-                    [ SList 2048 indices'
-                    , contData
-                    , SVector 96 sig'
-                    ]
+  let sig' = map Uint8 (indexedAttestationSignature item)
+      indices' = map Uint64 (attestingIndices item)
+      attData' = indexedAttestationData item
+      contData = attestationDataToContainer attData' in 
+  SContainer
+    [ SList 2048 (Uint64 0) indices'
+    , contData
+    , SVector 96 sig'
+    ]
 
 emptyAttestation :: Attestation
 emptyAttestation =
@@ -275,16 +280,16 @@ emptyAttestation =
     , signature = [0]
     }
 
-attestationToContainer :: Attestation -> SSZItem a
+attestationToContainer :: Attestation -> SSZItem
 attestationToContainer item =
-  let sig' = map SUint8 (signature item)
-   in let attData' = attestationData item
-       in let contData = attestationDataToContainer attData'
-           in SContainer
-                [ SBitlist (aggregationBits item)
-                , contData
-                , SVector 96 sig'
-                ]
+  let sig' = map Uint8 (signature item)
+      attData' = attestationData item
+      contData = attestationDataToContainer attData' in
+  SContainer
+    [ SBitlist (aggregationBits item)
+    , contData
+    , SVector 96 sig'
+    ]
 
 emptyAttestationData :: AttestationData
 emptyAttestationData =
@@ -296,12 +301,12 @@ emptyAttestationData =
     , target = emptyCheckpoint
     }
 
-attestationDataToContainer :: AttestationData -> SSZItem a
+attestationDataToContainer :: AttestationData -> SSZItem
 attestationDataToContainer item =
-  let root' = map SUint8 (beaconBlockRoot item)
+  let root' = map Uint8 (beaconBlockRoot item)
    in SContainer
-        [ SUint64 $ slot item
-        , SUint64 $ committeeIndex item
+        [ Uint64 $ slot item
+        , Uint64 $ committeeIndex item
         , SVector 32 root'
         , checkpointToContainer (source item)
         , checkpointToContainer (target item)
@@ -310,10 +315,10 @@ attestationDataToContainer item =
 emptyCheckpoint :: Checkpoint
 emptyCheckpoint = Checkpoint {checkpointEpoch = 0, checkpointRoot = [0]}
 
-checkpointToContainer :: Checkpoint -> SSZItem a
+checkpointToContainer :: Checkpoint -> SSZItem
 checkpointToContainer item =
-  let root' = map SUint8 (checkpointRoot item)
-   in SContainer [SUint64 $ checkpointEpoch item, SVector 32 root']
+  let root' = map Uint8 (checkpointRoot item)
+   in SContainer [Uint64 $ checkpointEpoch item, SVector 32 root']
 
 emptyDeposit :: Deposit
 emptyDeposit =
@@ -322,9 +327,9 @@ emptyDeposit =
     , depositData = emptyDepositData
     }
 
-depositToContainer :: Deposit -> SSZItem a
+depositToContainer :: Deposit -> SSZItem
 depositToContainer item =
-  let proof' = map (SVector 32 . map SUint8) (proof item)
+  let proof' = map (SVector 32 . map Uint8) (proof item)
    in SContainer
         [ SVector 33 proof'
         , depositDataToContainer $ depositData item
@@ -339,36 +344,36 @@ emptyDepositData =
     , depositSignature = [0]
     }
 
-depositDataToContainer :: DepositData -> SSZItem a
+depositDataToContainer :: DepositData -> SSZItem
 depositDataToContainer item =
-  let pub' = map SUint8 (depositPubKey item)
-   in let withdraw' = map SUint8 (depositWithdrawalCredentials item)
-       in let sig' = map SUint8 (depositSignature item)
-           in SContainer
-                [ SVector 48 pub'
-                , SVector 32 withdraw'
-                , SUint64 $ amount item
-                , SVector 96 sig'
-                ]
+  let pub' = map Uint8 (depositPubKey item)
+      withdraw' = map Uint8 (depositWithdrawalCredentials item)
+      sig' = map Uint8 (depositSignature item) in
+  SContainer
+    [ SVector 48 pub'
+    , SVector 32 withdraw'
+    , Uint64 $ amount item
+    , SVector 96 sig'
+    ]
 
-signedVoluntaryExitToContainer :: SignedVoluntaryExit -> SSZItem a
+signedVoluntaryExitToContainer :: SignedVoluntaryExit -> SSZItem
 signedVoluntaryExitToContainer item =
-  let sig' = map SUint8 (voluntaryExitSignature item)
+  let sig' = map Uint8 (voluntaryExitSignature item)
    in SContainer
         [ voluntaryExitToContainer $ voluntaryExit item
         , SVector 96 sig'
         ]
 
-signedEmptyVoluntaryExit :: SignedVoluntaryExit
-signedEmptyVoluntaryExit =
+emptySignedVoluntaryExit :: SignedVoluntaryExit
+emptySignedVoluntaryExit =
   SignedVoluntaryExit
     { voluntaryExit = emptyVoluntaryExit
     , voluntaryExitSignature = [0]
     }
 
-voluntaryExitToContainer :: VoluntaryExit -> SSZItem a
+voluntaryExitToContainer :: VoluntaryExit -> SSZItem
 voluntaryExitToContainer item =
-  SContainer [SUint64 $ voluntaryExitEpoch item, SUint64 $ voluntaryExitValidatorIndex item]
+  SContainer [Uint64 $ voluntaryExitEpoch item, Uint64 $ voluntaryExitValidatorIndex item]
 
 emptyVoluntaryExit :: VoluntaryExit
 emptyVoluntaryExit =
@@ -377,18 +382,18 @@ emptyVoluntaryExit =
     , voluntaryExitValidatorIndex = 0
     }
 
-syncAggregateToContainer :: SyncAggregate -> SSZItem a
+syncAggregateToContainer :: SyncAggregate -> SSZItem
 syncAggregateToContainer item =
-  let sig' = map SUint8 (syncCommitteeSignature item)
+  let sig' = map Uint8 (syncCommitteeSignature item)
    in SContainer
-        [ SBitvector 64 $ syncCommitteeBits item
+        [ SBitvector $ syncCommitteeBits item
         , SVector 96 sig'
         ]
 
 emptySyncAggregate :: SyncAggregate
 emptySyncAggregate =
   SyncAggregate
-    { syncCommitteeBits = B.empty
+    { syncCommitteeBits = B.replicate 64 0
     , syncCommitteeSignature = [0]
     }
 
@@ -411,21 +416,21 @@ emptyExecutionPayloadHeader =
     , transactionsRoot = [0]
     }
 
-executionPayloadHeaderToContainer :: ExecutionPayloadHeader -> SSZItem a
+executionPayloadHeaderToContainer :: ExecutionPayloadHeader -> SSZItem
 executionPayloadHeaderToContainer item =
   SContainer
-    [ SVector 32 (map SUint8 $ parentHash item)
-    , SVector 20 (map SUint8 $ feeRecipient item)
-    , SVector 32 (map SUint8 $ payloadStateRoot item)
-    , SVector 32 (map SUint8 $ receiptsRoot item)
-    , SVector 256 (map SUint8 $ logsBloom item)
-    , SVector 32 (map SUint8 $ prevRandao item)
-    , SUint64 $ blockNumber item
-    , SUint64 $ gasLimit item
-    , SUint64 $ gasUsed item
-    , SUint64 $ timestamp item
-    , SList 32 (map SUint8 $ extraData item)
-    , SVector 32 (map SUint8 $ baseFeePerGas item)
-    , SVector 32 (map SUint8 $ payloadBlockHash item)
-    , SVector 32 (map SUint8 $ transactionsRoot item)
+    [ SVector 32 (map Uint8 $ parentHash item)
+    , SVector 20 (map Uint8 $ feeRecipient item)
+    , SVector 32 (map Uint8 $ payloadStateRoot item)
+    , SVector 32 (map Uint8 $ receiptsRoot item)
+    , SVector 256 (map Uint8 $ logsBloom item)
+    , SVector 32 (map Uint8 $ prevRandao item)
+    , Uint64 $ blockNumber item
+    , Uint64 $ gasLimit item
+    , Uint64 $ gasUsed item
+    , Uint64 $ timestamp item
+    , SList 32 (Uint8 0) (map Uint8 $ extraData item)
+    , SVector 32 (map Uint8 $ baseFeePerGas item)
+    , SVector 32 (map Uint8 $ payloadBlockHash item)
+    , SVector 32 (map Uint8 $ transactionsRoot item)
     ]

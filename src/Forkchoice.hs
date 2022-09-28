@@ -2,6 +2,7 @@ module Forkchoice where
 
 import Data.Map qualified as Map
 import Data.Set qualified as Set
+import Data.List qualified as List
 
 import ConsensusTypes qualified as Types
 
@@ -18,6 +19,9 @@ type Epoch = Word64
 type Slot = Word64
 type Root = [Word8]
 type ValidatorIndex = Word64
+type Gwei = Word64
+type Head = Root
+type Child = Root
 
 data Store = Store
   {
@@ -63,14 +67,35 @@ data Validator = Validator
   }
   deriving stock (Eq, Show)
 
-type Gwei = Word64
-latestAttestingBalance :: Store -> Root -> BeaconState -> Gwei
-latestAttestingBalance store root justifiedState =
+latestAttestingBalance :: Store -> BeaconState -> Root -> Gwei
+latestAttestingBalance store justifiedState root =
   let activeVals = activeValidators justifiedState
-      eligibleVals = filter (\(i, _) -> isEligibleForkchoiceIndex i store root) activeVals
+      eligibleVals = filter (\(i, _) -> isEligibleForkchoiceIndex store root i) activeVals
       effectiveBalances = map (effectiveBalance . snd) eligibleVals
       totalEffectiveBalances = sum effectiveBalances in
   totalEffectiveBalances
+
+isViableBranch :: Store -> Root -> Map Root Block -> Bool
+isViableBranch store root incomingBlocks =
+  False
+
+getHead :: Store -> BeaconState -> Head -> [Child] -> Head
+getHead _ _ hd [] = hd
+getHead store jState hd _ =
+  let children' = Map.keys $ Map.filter (`isParent` hd) (blocks store)
+      balances' = map (latestAttestingBalance store jState) children'
+      candidates = zip children' balances'
+      hd' = List.maximumBy (comparing snd) candidates in
+  getHead store jState (fst hd') children'
+
+isParent :: Block -> Root -> Bool
+isParent blk rt = parentRoot blk == rt
+
+chainHead :: Store -> Root
+chainHead store =
+  let blks = blocks store
+      startRoot = Types.checkpointRoot (justifiedCheckpoint store) in
+  startRoot
 
 ancestor :: Store -> Root -> Slot -> Root
 ancestor store r s = case Map.lookup r (blocks store) of
@@ -88,19 +113,16 @@ activeValidators beaconState =
       valsWithIndex = zip [(0::ValidatorIndex)..] (validators beaconState) in
       filter (\(_, v) -> isActiveAtEpoch v currEpoch) valsWithIndex 
 
-isEligibleForkchoiceIndex :: ValidatorIndex -> Store -> Root -> Bool
-isEligibleForkchoiceIndex index store incomingRoot =
-  not (Set.member index (equivocatingIndices store))
-    &&
-    (case Map.lookup index (messages store) of
-    Nothing -> False
-    Just msg ->
-      let rt = messageRoot msg in
-      case Map.lookup rt (blocks store) of
-        Nothing -> False
-        Just blk ->
-          let ancestralRoot = ancestor store rt (slot blk) in
-          ancestralRoot == incomingRoot)
+isEligibleForkchoiceIndex :: Store -> Root -> ValidatorIndex -> Bool
+isEligibleForkchoiceIndex store incomingRoot index =
+  not (Set.member index (equivocatingIndices store)) && isJust isAncestral where
+    isAncestral :: Maybe Bool
+    isAncestral = do
+      msg <- Map.lookup index (messages store)
+      let rt = messageRoot msg
+      blk <- Map.lookup rt (blocks store)
+      let ancestralRoot = ancestor store rt (slot blk)
+      Just $ ancestralRoot == incomingRoot
 
 slotToEpoch :: Slot -> Epoch
 slotToEpoch s = s `div` slotsPerEpoch
@@ -110,17 +132,6 @@ slotsSinceGenesis store =
   let curr = currentTime store in
   let genesis = genesisTime store in
   fromIntegral (curr - genesis) `div` secondsPerSlot
-
-
-
-
-
-
-
-
-
-
-
 
 
 

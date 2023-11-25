@@ -33,7 +33,8 @@ data Store = Store
     finalizedCheckpoint :: Types.Checkpoint,
     proposerBoostRoot :: Root,
     equivocatingIndices :: Set ValidatorIndex,
-    blocks :: Map Root Block
+    blocks :: Map Root Block,
+    blockStates :: Map Root BeaconState
   }
   deriving stock (Eq, Show)
 
@@ -75,14 +76,32 @@ latestAttestingBalance store justifiedState root =
       totalEffectiveBalances = sum effectiveBalances in
   totalEffectiveBalances
 
-isViableBranch :: Store -> Root -> Map Root Block -> Bool
-isViableBranch store root incomingBlocks =
-  False
+filterBlockTree :: Store -> Root -> Map Root Block -> Map Root Block
+filterBlockTree store root =
+  f store root [] where
+    -- No more children, so update the map as needed.
+    f s r [] incomingBlocks =
+      case Map.lookup r (blocks store) of
+        Nothing -> incomingBlocks
+        Just blk ->
+          case Map.lookup r (blockStates store) of
+            Nothing -> incomingBlocks
+            Just headState ->
+              let correctJ = True
+                  correctF = True in
+              if correctJ && correctF 
+                then 
+                  Map.insert root blk (blocks store)
+              else
+                incomingBlocks
+    -- If there are children, continue making recursive calls.
+    f s r children incomingBlocks =
+      incomingBlocks
 
 getHead :: Store -> BeaconState -> Head -> [Child] -> Head
 getHead _ _ hd [] = hd
 getHead store jState hd _ =
-  let children' = Map.keys $ Map.filter (`isParent` hd) (blocks store)
+  let children' = getChildren store hd
       balances' = map (latestAttestingBalance store jState) children'
       candidates = zip children' balances'
       hd' = List.maximumBy (comparing snd) candidates in
@@ -91,11 +110,9 @@ getHead store jState hd _ =
 isParent :: Block -> Root -> Bool
 isParent blk rt = parentRoot blk == rt
 
-chainHead :: Store -> Root
-chainHead store =
-  let blks = blocks store
-      startRoot = Types.checkpointRoot (justifiedCheckpoint store) in
-  startRoot
+getChildren :: Store -> Head -> [Child]
+getChildren store hd =
+  Map.keys $ Map.filter (`isParent` hd) (blocks store)
 
 ancestor :: Store -> Root -> Slot -> Root
 ancestor store r s = case Map.lookup r (blocks store) of
